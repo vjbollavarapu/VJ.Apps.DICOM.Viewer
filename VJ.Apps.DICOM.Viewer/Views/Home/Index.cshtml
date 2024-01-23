@@ -1,0 +1,165 @@
+﻿@{
+    Layout = "";
+}
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <title>OVIYAM2</title>
+
+    <link rel="icon" type="image/png" href="~/images/favicon.png" />
+    <link rel="stylesheet" type="text/css" href="~/css/jquery.ui.all.css" />
+    <!-- <link rel="stylesheet" type="text/css" href="~/css/layout-default-latest.css" />  -->
+    <link rel="stylesheet" type="text/css" href="~/css/jquery.contextMenu.css" />
+    <link rel="stylesheet" type="text/css" href="~/css/demo_table_jui.css" />
+    <link rel="stylesheet" type="text/css" href="~/css/jquery.alerts.css" />
+
+    <link type="text/css" rel="stylesheet" href="~/css/custom-style.css" />
+
+    <script type="text/javascript" src="js/lib/jquery-latest.js"></script>
+    <script type="text/javascript">
+        if (typeof CustomEvent === 'undefined') {
+            CustomEvent = function (type, eventInitDict) {
+                var event = document.createEvent('CustomEvent');
+                event.initCustomEvent(type, eventInitDict['bubbles'], eventInitDict['cancelable'], eventInitDict['detail']);
+                return event;
+            };
+        }
+    </script>
+
+    <script type="text/javascript" src="~/js/lib/jquery-latest.js"></script>
+    <script type="text/javascript" src="~/js/lib/jquery-ui-latest.js"></script>
+    <script type="text/javascript" src="~/js/lib/jquery.layout-latest.js"></script>
+    <script type="text/javascript" src="~/js/lib/jquery.dataTables.js"></script>
+    <script type="text/javascript" src="~/js/lib/jquery.cookies.min.js"></script>
+    <script type="text/javascript" src="~/js/lib/jquery.contextMenu.js"></script>
+    <script type="text/javascript" src="~/js/lib/jquery.sleep.js"></script>
+    <script type="text/javascript" src="~/js/features.js"></script>
+    <!--<script type="text/javascript" src="~/js/layout.js"></script>-->
+    <!--<script type="text/javascript" src="~/js/windowing.js"></script>-->
+    <!--<script type="text/javascript" src="~/js/zoom1.js"></script>-->
+    <!--<script type="text/javascript" src="~/js/imageMeasure.js"></script>-->
+    <!--<script type="text/javascript" src="~/js/lib/raphael-min.js"></script>-->
+    <!--<script type="text/javascript" src="~/js/lib/raphaelle.js"></script>-->
+    <script type="text/javascript" src="~/js/lib/jquery.alerts.js"></script>
+    <script type="text/javascript" src="~/js/lib/jquery.waitforimages.min.js"></script>
+
+    <script type="text/javascript" src="~/js/LoadLanguage.js"></script>
+    <script type="text/javascript" src="~/js/lib/jqcombo.js"></script>
+
+    <!-- theme switcher -->
+    <script type="text/javascript" src="~/js/lib/debug.js"></script>
+    <script type="text/javascript" src="~/js/lib/themeswitchertool.js"></script>
+    <script type="text/javascript" src="~/js/lib/date.js"></script>
+    <script type="text/javascript" src="~/js/viewer1.js"></script>
+
+    <!-- Windowing  -->
+    <!--  <script type="text/javascript" src="js/lib/BinFileReader.js"></script>
+       <script type="text/javascript" src="js/dicom/DicomInputStreamReader.js"></script>
+       <script type="text/javascript" src="js/dicom/DicomElement.js"></script>
+       <script type="text/javascript" src="js/dicom/DicomParser.js"></script>
+       <script type="text/javascript" src="js/dicom/LookupTable.js"></script>-->
+
+    <script type="text/javascript" src="~/js/fullscreen.js"></script>
+
+    <script type="text/javascript" src="~/js/oviyam.js"></script>
+    <script type="text/javascript" src="~/js/dicom/NewDicomParser.js"></script>
+    <script type="text/javascript" src="~/js/dicom/NewDictionary.js"></script>
+    <script type="text/javascript" src="~/js/html/html.js"></script>
+    <script type="text/javascript" src="~/js/utils/string.js"></script>
+
+    <!-- Annotations -->
+    <!-- <script type="text/javascript" src="js/Annotation.js"></script>
+     <script type="text/javascript" src="js/shapes.js"></script>-->
+
+    <script type="text/javascript">
+        var myLayout;
+        var pageLoaded = false;
+        /*
+          window.onload = function() {
+              window.applicationCache.addEventListener('updateready', function(e) {
+                  if(!pageLoaded) {
+                      loadViewerPage();
+                      pageLoaded = true;
+                  }
+              }, false);
+         };
+         window.applicationCache.oncached =  function() {
+              loadViewerPage();
+              pageLoaded = true;
+          }
+
+          window.applicationCache.onnoupdate = function() {
+              if(!pageLoaded) {
+                  loadViewerPage();
+                  pageLoaded = true;
+              }
+          }*/
+
+        $(document).ready(function () {
+            loadViewerPage();
+        });
+
+    </script>
+
+    <script type="text/javascript">
+
+        function initPage() {
+            //createTables();
+            //checkStudyAvailability();
+
+            // getStudyDetails();
+
+
+            //var queryString = window.top.location.search.substring(1);
+            //var queryString = window.location.href;
+        }
+
+        function getParameter(queryString, parameterName) {
+            if (queryString == null) {
+                queryString = window.location.href;
+            }
+
+            //Add "=" to the parameter name (i.e. parameterName=value);
+            var parameterName = parameterName + "=";
+            if (queryString.length > 0) {
+                //Find the beginning of the string
+                var begin = queryString.indexOf(parameterName);
+                if (begin != -1) {
+                    //Add the length (integer) to the beginning
+                    begin += parameterName.length;
+                    var end = queryString.indexOf("&", begin);
+                    if (end == -1) {
+                        end = queryString.length;
+                    }
+                    return unescape(queryString.substring(begin, end));
+                }
+
+                return "null";
+            }
+        }
+
+    </script>
+</head>
+<body style="cursor: auto; ">
+    <div id="loadingView">
+        <div id="spinnerDiv">
+            <img src="~/images/overlay_spinner.gif" alt="">
+            <div id="loadingText" class="loadingText">Loading...</div>
+        </div>
+    </div>
+
+    <div id="optional-container" class="ui-layout-container ui-widget-content" style="overflow:hidden;position:relative;background:#333333;width:100%;">
+        <div id="toolbarContainer" class="ui-layout-north ui-layout-pane ui-layout-pane-north" style="border:none;background:black;padding: 5px 7px 0px 7px;">
+        </div> <!-- toolbar container-->
+        <div id="westPane" style="height: 95%; width: 255px; display: block; float: left; "></div>
+        <div id="tabs_div" style="height: 95%; float: left; width: calc(100% - 256px);">
+            <iframe style="height:100%;width:100%;visibility:hidden;" frameBorder=0 scrolling="yes"></iframe>
+        </div>
+    </div> <!--optional container-->
+
+    <div id="selectedFrame" style="display: none"></div>
+    <div id="totRow" style="display: none"></div>
+    <div id="totColumn" style="display: none"></div>
+</body>
+</html>

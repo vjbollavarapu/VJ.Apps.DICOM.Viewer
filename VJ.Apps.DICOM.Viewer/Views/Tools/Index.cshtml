@@ -1,0 +1,1083 @@
+﻿@{
+    Layout = "";
+}
+<!--https://dicom-viewer.vcs-exray.net/viewer.html?patientID=xxxx&studyUID=xxx&serverName=xxx-->
+<!DOCTYPE HTML>
+<html lang="en">
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+    <script type="text/javascript" src="~/js/lib/jquery-latest.js"></script>
+    <script type="text/javascript" src="~/js/lib/jquery-ui-latest.js"></script>
+    <script type="text/javascript" src="~/js/lib/jquery.ambiance.js"></script>
+    <script type="text/javascript" src="~/js/lib/jquery.cookies.min.js"></script>
+    <script type="text/javascript" src="~/js/lib/jquery.contextMenu.js"></script>
+    <script type="text/javascript" src="~/js/LoadLanguage.js"></script>
+    <script type="text/javascript">
+        var pat = null;
+        var directLaunch = false;
+        var seriesImgsLoadedAgain = false;
+        var loadedStudy = [];
+
+        var rulerMap = new Map();
+        var rectMap = new Map();
+        var ovalMap = new Map();
+        var angleMap = new Map();
+        var probeMap = new Map();
+        var cobbMap = new Map();
+
+        function enableDownload(downloadStudy) {
+            loadLanguages();
+            $.post("@Url.Action("Index","DownloadConfiguration")", {
+                'action': 'READ'
+            }, function (data) {
+                if (data.trim() == "Yes") {
+                    downloadStudy.style.display = "block";
+                } else {
+                    downloadStudy.style.display = "none";
+                }
+            }, 'text');
+        }
+
+        function loadViewerPage() {
+            initPage();
+            $("#toolbarContainer").load("tools");
+        }
+
+        function getStudyDetails() {
+            pat = $.cookies.get('patient');
+            var queryString = document.location.search.substring(1);
+            var patId = getParameter(queryString, "patientID");
+            var studyId = getParameter(queryString, "studyUID");
+            var seriesId = getParameter(queryString, "seriesUID");
+            var serverName = getParameter(queryString, "serverName");
+
+            $.get("@Url.Action("Index","UserConfiguration")", {
+                'settings': 'windowing',
+                'todo': 'READ'
+            }, function (data) {
+                data = data.trim();
+                if (data === 'Yes') {
+                    sessionStorage["tools"] = "windowing";
+                } else {
+                    sessionStorage["tools"] = "";
+                }
+            }, 'text');
+
+            if (serverName == 'null') {
+                serverName = '';
+            }
+            if (patId == 'null') {
+                patId = '';
+            }
+            if (studyId == 'null') {
+                studyId = '';
+            }
+
+            if (patId != null && studyId != null && serverName != null) {
+                if (seriesId != 'null') {
+                    $.post(@Url.Action("Index","Series")", {
+                        "patientID": patId,
+                        "studyUID": studyId,
+                        "seriesUID": seriesId,
+                        "serverName": serverName
+                    }, function (data) {
+                        pat = data;
+                        data = JSON.stringify(data);
+                        sessionStorage.setItem('patient', data);
+                        loadStudy();
+                    }, "json");
+                } else {
+                    $.post("@Url.Action("Index","StudyInfo")", {
+                        "patientID": patId,
+                        "studyUID": studyId,
+                        "serverName": serverName
+                    }, function (data) {
+                        if (data['error'] != null) {
+                            if (data['error'].trim() == 'Server not found') {
+                                alert("Server not found!!!");
+                                return;
+                            }
+                        }
+                        directLaunch = true;
+                        pat = data;
+                        data = JSON.stringify(data);
+                        $.cookies.set('patient', data);
+                        loadStudy();
+                    }, "json");
+                }
+            } else {
+                //check for series selection option.
+                if (pat.seriesSelection != null && pat.seriesSelection == 'true') {
+                    showSeriesSelectionModal();
+                } else {
+                    loadStudy();
+                }
+            }
+        }
+
+        function isCompatible() {
+            return !!(window.requestFileSystem || window.webkitRequestFileSystem);
+        }
+
+        function saveJpgImages() {
+            if (isCompatible()) {
+                window.requestFileSystem = window.requestFileSystem ||
+                    window.webkitRequestFileSystem;
+                var secondTR = $('.seriesTable');
+                secondTR.find('img').each(function () {
+                    if (this.complete) {
+                        saveLocally(this);
+                    } else {
+                        this.onload = function () {
+                            saveLocally(this);
+                        };
+                    }
+
+                });
+            }
+        }
+
+        function saveLocally(image) {
+            var cvs = document.createElement('canvas');
+            var ctx = cvs.getContext("2d");
+
+            var fn = '';
+            if (image.src.indexOf('@Url.Content("~/images/pdf.png")') >= 0) {
+                fn = getParameter($(image).attr('imgSrc'), 'object') + '.pdf';
+            } else {
+                fn = getParameter(image.src, 'object') + '.jpg';
+            }
+            cvs.width = image.naturalWidth;
+            cvs.height = image.naturalHeight;
+            ctx.drawImage(image, 0, 0);
+
+            if (image.src.indexOf('@Url.Content("~/images/pdf.png")') >= 0) {
+                var imd = cvs.toDataURL('@Url.Content("~/image/pdf")');
+                var ui8a = convertDataURIToBinary(imd);
+                var bb = new Blob([ui8a], {
+                    type: 'image/pdf'
+                });
+            } else {
+                var imd = cvs.toDataURL('image/jpeg');
+                var ui8a = convertDataURIToBinary(imd);
+                var bb = new Blob([ui8a], {
+                    type: 'image/jpeg'
+                });
+            }
+
+            window.requestFileSystem(window.TEMPORARY, 1024 * 1024, function (fs) {
+                fs.root.getFile(fn, {
+                    create: true
+                }, function (fileEntry) {
+                    // Create a FileWriter object for our FileEntry.
+                    fileEntry.createWriter(function (fileWriter) {
+                        fileWriter.onwriteend = function (e) {
+                            //console.log(fileEntry.fullPath + ' Write completed.');
+                        };
+
+                        fileWriter.onerror = function (e) {
+                            console.log('Write failed: ' + e.toString());
+                        };
+
+                        fileWriter.write(bb); //.getBlob(contentType[extname]));
+                    }, fileErrorHandler);
+                }, fileErrorHandler);
+            }, fileErrorHandler);
+        }
+
+        function convertDataURIToBinary(dataURI) {
+            var BASE64_MARKER = ';base64,';
+            var base64Index = dataURI.indexOf(BASE64_MARKER) + BASE64_MARKER.length;
+            var base64 = dataURI.substring(base64Index);
+            var raw = window.atob(base64);
+            var rawLength = raw.length;
+            var array = new Uint8Array(new ArrayBuffer(rawLength));
+
+            for (i = 0; i < rawLength; i++) {
+                array[i] = raw.charCodeAt(i);
+            }
+            return array;
+        }
+
+        function loadStudy() {
+            // load WestPane content
+            var tmpUrl = "@Url.Action("Index","WestContainer")?patient=" + encodeURIComponent(pat.pat_ID) + "&study=" +
+                pat.studyUID + "&patientName=" + encodeURIComponent(pat.pat_Name);
+            tmpUrl += "&studyDesc=" + encodeURIComponent(pat.studyDesc) + "&studyDate=" + pat.studyDate +
+                "&totalSeries=" + pat.totalSeries + "&dcmURL=" + pat.dicomURL;
+            tmpUrl += "&wadoUrl=" + pat.serverURL + "&modality=" + pat.modality;
+            tmpUrl += "&contentType=image/" + pat.imgType;
+
+            if (pat.seriesUID != null) {
+                tmpUrl += "&series=" + pat.seriesUID + "&seriesNo=" + pat.seriesNo + "&seriesDesc=" + pat.seriesDesc + "&modality=" + pat.modality + "&numberOfImages=" + pat.imgsInSeries + "&previewmode=single";
+            }
+
+            var addedSeries = sessionStorage.getItem('seriesUIDs');
+            if (addedSeries != null) {
+                tmpUrl += "&seriesIds=" + addedSeries;
+            }
+
+            $('#westPane').load(encodeURI(tmpUrl));
+            document.title = pat.pat_Name;
+        }
+
+        function loadDownloadModal() {
+            if (pat.serverURL == "C-MOVE" || pat.serverURL == "C-GET") {
+                $('#title').text("CANNOT INVOKE DOWNLOAD WINDOW");
+                $('#errorInfo').text("Files can be downloaded only from the servers having retrieve type as WADO ");
+                var downloadSelection = document.getElementById("downloadSelection-content");
+                downloadSelection.style.display = "none";
+                $("#downloadInfo").removeClass('modal-content').addClass('modal-error');
+            } else {
+                var errorMsg = document.getElementById("errorMsg");
+                errorMsg.style.display = "none";
+                $('#title').text("Download JPEG/DICOM files");
+                var tempUrl = "downloadSelection.jsp?patient=" + encodeURIComponent(pat.pat_ID) + "&study=" +
+                    pat.studyUID + "&patientName=" + encodeURIComponent(pat.pat_Name);
+                tempUrl += "&studyDesc=" + encodeURIComponent(pat.studyDesc) + "&studyDate=" + pat.studyDate +
+                    "&totalSeries=" + pat.totalSeries + "&dcmURL=" + pat.dicomURL;
+                tempUrl += "&wadoUrl=" + pat.serverURL;
+                tempUrl += "&contentType=image/" + pat.imgType; // Image Type - png or Jpeg
+                $('#downloadSelection-content').load(encodeURI(tempUrl));
+            }
+
+        }
+        /*function getSeries(patId, studyUID) {
+            $.post("Series.do", {
+                "patientID" : patId,
+                "studyUID" : studyUID,
+                "dcmURL" : pat.dicomURL
+            }, function(data) {
+                sessionStorage[studyUID] = JSON.stringify(data);
+                firstSeries = data[0]['seriesUID'];
+                if(pat.serverURL != 'C-MOVE' && pat.serverURL != 'C-GET') {
+                    $.each(data, function(i, series) {
+                        getInstances(patId, studyUID, series['seriesUID']);
+                    });
+                }
+            }, "json");
+        }
+
+        function getSeries(patId, studyUID) {
+
+            $.post("Series.do", {
+                "patientID": patId,
+                "studyUID": studyUID,
+                "dcmURL": pat.dicomURL,
+                "retrieve": pat.serverURL
+            }, function(data) {
+                sessionStorage[studyUID] = JSON.stringify(data);
+                if (pat.serverURL != "C-MOVE" && pat.serverURL != "C-GET") {
+                    $.each(data, function(i, series) {
+                        getInstances(patId, studyUID, series['seriesUID']);
+                    });
+                }
+            }, "json");
+        } */
+
+        function getInstances(patId, studyUID, seriesUID) {
+            $.post("@Url.Action("Action","Instance")", {
+                "patientId": patId,
+                "studyUID": studyUID,
+                "seriesUID": seriesUID,
+                "dcmURL": pat.dicomURL,
+                "serverURL": pat.serverURL
+            }, function (data) {
+                sessionStorage[seriesUID] = JSON.stringify(data);
+            }, "json");
+        }
+
+        function getIns(seriesUID) {
+            jQuery.ajax({
+                url: "@Url.Action("Index","Instance")?patientId=" + pat.pat_ID + "&studyUID=" + pat.studyUID + "&seriesUID=" + seriesUID + "&dcmURL=" + pat.dicomURL + "&serverURL=" + pat.serverURL,
+                dataType: 'json',
+                cache: false,
+                success: function (data) {
+                    sessionStorage[seriesUID] = JSON.stringify(data);
+                },
+                error: function (request) {
+                    console.log('error');
+                }
+            });
+        }
+
+        function getInstanceDetails(paramData) {
+            var instanceWorker = new Worker('@Url.Content("~/js/instance_worker.js")');
+            instanceWorker.addEventListener('message', function (e) {
+                sessionStorage[paramData.seriesUID] = JSON.stringify(JSON.parse(e.data));
+                instanceWorker.terminate();
+            }, false);
+
+            //send data to worker
+            instanceWorker.postMessage(paramData);
+        }
+
+        function fetchOtherStudies() {
+            $.get("UserConfig.do", { 'settings': 'prefetch', 'todo': 'READ' }, function (data) {
+                var doFetch = false;
+                if (directLaunch) {
+                    if (data.trim() == 'Yes' && getParameter(document.location.search.substring(1), "patientID") != 'null') {
+                        doFetch = true;
+                    }
+                } else {
+                    if (data.trim() == 'Yes' && pat.pat_ID.length > 0) {
+                        doFetch = true;
+                    }
+                }
+
+                if (doFetch) {
+                    $.post("@Url.Action("Index","OtherStudies")", {
+                        "patientID": pat.pat_ID,
+                        "studyUID": pat.studyUID,
+                        "dcmURL": pat.dicomURL,
+                        "serverURL": pat.serverURL
+                    }, function (data) {
+                        if (data.length > 0) {
+                            $("#otherStudiesInfo").html(data.length + (data.length > 1 ? " archived studies found." : " archived study found."));
+                            var res = data.reduce(function (obj, v) {
+                                obj[v.modality] = (obj[v.modality] || 0) + 1;
+                                return obj;
+                            }, {});
+                            res.ALL = data.length;
+                            var keys = Object.keys(res);
+                            var list = '';
+                            let modalityAvailable = false;
+                            keys.forEach(key => {
+                                let i = key + ' - ' + res[key];
+                                let cssClass = "otherModalities button";
+                                if (key == pat.modality || (key == 'ALL' && !modalityAvailable)) {
+                                    cssClass += " selectedModality";
+                                    modalityAvailable = true;
+                                } else {
+                                    cssClass += " unselectedModality";
+                                }
+                                i = '<button class="' + cssClass + '" onclick="loadOtherStudies(this);" modality="'
+                                    + key + '">' + i + '</button>';
+                                list += i;
+                            });
+                            $('#otherModalities').html(list);
+                            loadOtherModalityStudies(pat.modality);
+                        } else {
+                            $("#otherStudiesInfo").text("No archived studies found.");
+                        }
+                        $("#otherStudies").show();
+                        $("#otherStudiesInfo").show();
+                    }, "json");
+                }
+            }, "text");
+        }
+
+        function loadOther(div1, isRet) {
+            var div = div1;
+            let img = $(div).children().get(0);
+            var childDiv = $(div).next();
+            if ($(childDiv).children().length > 0) {
+                acc($(div));
+            } else {
+                $(div).addClass("loading");
+                $(img).remove();
+                loadedStudy.push($(div).parent().attr('id'));
+                $(childDiv).load($(div).attr('link'));
+                acc($(div));
+                $('#otherStudies').removeClass('otherStudies-min').addClass('otherStudies-max');
+            }
+        }
+
+        function loadOtherStudies(div) {
+            var modality = $(div).attr('modality');
+            $('.selectedModality').removeClass('selectedModality').addClass('unselectedModality');
+            $(div).addClass('selectedModality').removeClass('unselectedModality');
+            loadOtherModalityStudies(modality);
+        }
+
+        function loadOtherModalityStudies(modality) {
+            if (pat.pat_ID.length > 0) {
+                $.post("@Url.Action("Index","OtherStudies")", {
+                    "patientID": pat.pat_ID,
+                    "studyUID": pat.studyUID,
+                    "dcmURL": pat.dicomURL,
+                    "modality": modality
+                }, function (result) {
+                    if (result.length > 0) {
+                        $('#otherStudies').children("div").each(function () {
+                            let divId = $(this).attr('id');
+                            let mod = divId.substring(0, divId.indexOf('-') - 1).trim();
+                            let selectedModality = $('.selectedModality').attr('modality');
+                            if (!loadedStudy.includes(divId)) {
+                                $(this).remove();
+                            } else if (selectedModality == mod || selectedModality == 'ALL') {
+                                $(this).show();
+                            } else {
+                                $(this).hide();
+                            }
+                        });
+
+                        $.each(result, function (i, study) {
+                            var studyID = study['studyUID'].replace(/\./g, '_');
+                            var id = `${study['modality']} - ${study['dateDesc']} - ${studyID}`;
+                            var ele = document.getElementById(id);
+                            if (ele == null && !loadedStudy.includes(ele)) {
+                                var div1 = `<div id="${id}">`;
+                                var link = encodeURI("@Url.Content("~/Study")?patient=" + pat.pat_ID + "&patient1=" + pat.pat_ID + "&study=" + study["studyUID"] + "&dcmURL=" + pat.dicomURL
+                                    + "&wadoUrl=" + pat.serverURL + "&studyDesc=" + study["studyDesc"] + "&descDisplay=false"
+                                    + "&studyDate=" + study["studyDate"] + "&contentType=image/" + pat.imgType);
+                                var div = "<div style='width:95%;' title='" + study['studyDesc'] + "' id=" + studyID + " class='accordion' link=" + link
+                                    + " onclick='loadOther(this,false);'" + " >" + study['modality'] + ' - ' + study['dateDesc']
+                                    + " <img src='images/download.png' style='float: right; position: absolute; right:0px' /> </div>";
+                                var child = '<div class="scrollable" style="overflow: auto; width:100%; margin-bottom: 2%; max-height: 70%; height: auto;"></div>';
+                                div1 += `${div} ${child} <\div>`;
+                                $("#otherStudies").append(div1);
+                            }
+                            ele = document.getElementById(id);
+                            $('#otherStudies').append(ele);
+                        });
+                    } else {
+                        loadOtherModalityStudies('');
+                    }
+                }, "json");
+            }
+        }
+
+        /**
+         * Function to show the series selection modal.
+         */
+        function showSeriesSelectionModal() {
+            var errorMsg = document.getElementById("errorMsg");
+            errorMsg.style.display = "none";
+
+            var tempUrl = "@Url.Action("Index","SeriesSelection")?patient=" + encodeURIComponent(pat.pat_ID) + "&study=" +
+                pat.studyUID + "&patientName=" + encodeURIComponent(pat.pat_Name);
+            tempUrl += "&studyDesc=" + encodeURIComponent(pat.studyDesc) + "&studyDate=" + pat.studyDate +
+                "&totalSeries=" + pat.totalSeries + "&dcmURL=" + pat.dicomURL;
+            tempUrl += "&wadoUrl=" + pat.serverURL;
+            tempUrl += "&contentType=image/" + pat.imgType; // Image Type - png or Jpeg
+
+            $('#seriesSelection-content').load(encodeURI(tempUrl));
+
+            document.getElementById('loadingView').style.display = 'none';
+
+            var modal = document.getElementById('seriesSelModal');
+            modal.style.display = "block";
+        }
+
+        function loadSelectedSeries(comp) {
+            var instanceUrl = "@Url.Action("Index","instance")?patientId=" + pat.pat_ID + "&study=" + pat.studyUID + "&seriesNo=" + comp.getAttribute('seriesNo')
+                + "&seriesDate=" + comp.getAttribute('seriesDate') + "&seriesDesc=" + comp.getAttribute('seriesDesc') + "&modality=" + comp.getAttribute('modality')
+                + "&numberOfImages=" + comp.getAttribute('numberOfImages') + "&series=" + comp.getAttribute('seriesId') + "&dcmURL=" + pat.dicomURL
+                + "&wadoUrl=" + pat.serverURL + "&previewmode=viewer"
+                + "&contentType=image/" + pat.imgType;
+
+            $(comp).load(encodeURI(instanceUrl));
+            $(comp).removeClass('not-selected-btn');
+            $(comp).closest('tr').prev().css('display', 'none');
+        }
+    </script>
+    <link rel="stylesheet" type="text/css" href="~/css/jquery.ambiance.css" />
+    <style type="text/css">
+        .toolbarButton {
+            position: relative;
+            float: left;
+            margin-left: 0px;
+            height: 100%;
+            width: 40px;
+        }
+
+        .toggleButton {
+            position: relative;
+            float: left;
+            margin-left: 0px;
+            height: 100%;
+            width: 40px;
+        }
+
+            .toggleButton:hover {
+                cursor: pointer;
+                background: #666;
+            }
+
+        .toggleOff {
+            background: #666;
+            color: #FFFFFF;
+            opacity: 1.0;
+        }
+
+        .imgOff {
+            position: relative;
+            top: 7px;
+        }
+
+        .imgOn {
+            position: relative;
+            top: 7px;
+        }
+
+        .current {
+            background: #666;
+            opacity: 1.0;
+        }
+
+        #containerBox {
+            height: 45px;
+            width: 101%;
+            background: #000;
+            margin-left: -6px;
+            margin-top: -6px;
+        }
+
+        .textOverlay {
+            position: absolute;
+            color: #FFFFFF;
+            font-weight: bold;
+            font-family: Arial;
+            font-size: 14px;
+            z-index: 900;
+        }
+
+        #loopSlider {
+            height: 9px;
+            background: rgb(175, 125, 105);
+        }
+
+        .ui-slider .ui-slider-handle {
+            background: rgb(100, 75, 75) !important;
+            height: 15px !important;
+            width: 15px !important;
+            cursor: pointer !important;
+        }
+
+        #loopDiv {
+            position: absolute;
+            right: 0px;
+            font-size: 10pt;
+            margin-top: 10px;
+            width: 23%;
+        }
+
+        #presetDiv {
+            float: left;
+            width: 100px;
+            display: table;
+            height: 100%;
+            text-align: center;
+        }
+
+        .tooltip {
+            margin: 4px;
+            padding: 4px;
+            border: 1px solid blue;
+            background-color: #FFF;
+            position: absolute;
+            z-index: 2;
+            color: #000;
+            font-size: 11px;
+        }
+        /* Metadata Tag list */
+
+        table.tagList {
+            border-collapse: collapse;
+        }
+
+            table.tagList thead td {
+                font-weight: bold;
+            }
+
+            table.tagList td {
+                border: 1px solid grey;
+                padding: 2px;
+                font-size: 80%;
+            }
+
+        .cmenuItem {
+            color: #FFF !important;
+            padding-left: 5px !important;
+            text-align: left;
+            font-size: 13px;
+        }
+
+            .cmenuItem:hover {
+                background: #0099FF;
+                background-image: none !important;
+            }
+
+        .ui-combobox {
+            position: relative;
+            display: inline-block;
+        }
+
+        .ui-button {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            margin-left: -1px;
+            padding: 0;
+            /* adjust styles for IE 6/7
+                        *height: 1.7em;
+                        *top: 0.1em; */
+        }
+
+        .ui-autocomplete-input {
+            margin: 0;
+            padding: 0.3em;
+        }
+
+        .modal {
+            display: none;
+            /* Hidden by default */
+            position: fixed;
+            /* Stay in place */
+            z-index: 1;
+            /* Sit on top */
+            padding-top: 100px;
+            /* Location of the box */
+            left: 0;
+            top: 0;
+            width: 100%;
+            /* Full width */
+            height: 100%;
+            /* Full height */
+            overflow: auto;
+            /* Enable scroll if needed */
+            background-color: #666;
+            /* Fallback color */
+            background-color: rgba(0, 0, 0, 0.4);
+            /* Black w/ opacity */
+        }
+        /* Modal Content */
+
+        .modal-content {
+            background-color: #666;
+            margin: auto;
+            border: 1px solid chocolate;
+            width: 575px;
+            height: 65%;
+        }
+
+        .modal-error {
+            background-color: #666;
+            margin: auto;
+            border: 1px solid chocolate;
+            width: 575px;
+            height: 140px;
+        }
+
+        .title {
+            width: 97%;
+            font-size: 15px;
+            font-weight: bolder;
+            text-align: center;
+            background: black;
+            color: #FF8A00;
+            padding: 8px;
+        }
+
+        .error-info {
+            font-size: 16px;
+            padding-right: 2%;
+            color: #FF8A00;
+            text-align: center
+        }
+
+        .button {
+            background-color: #FF8A00;
+            border: none;
+            color: white;
+            padding: 7px 20px;
+            text-align: center;
+            text-decoration: none;
+            font-size: 12px;
+            margin-left: 45%;
+            margin-top: 10%;
+            cursor: pointer;
+            -webkit-transition-duration: 0.4s;
+            /* Safari */
+            transition-duration: 0.4s;
+        }
+
+        .toggleButton .contextMenu A {
+            min-height: 20px;
+            height: auto;
+        }
+    </style>
+
+    <script type="text/javascript">
+        jQuery(document).ready(function () {
+
+            var downloadStudy = document.getElementById("downloadStudy");
+            enableDownload(downloadStudy);
+            jQuery("#loopSlider").slider({
+                max: 1000,
+                value: 500
+            });
+            getStudyDetails();
+            jQuery("#loopSlider").bind("slidechange", function (event, ui) {
+                loopSpeed = parseInt(jQuery("#loopSlider").slider('option').max - ui.value);
+                createEvent('ToolSelection', {
+                    tool: 'loop',
+                    isLoop: $('#loopChkBox').is(':checked')
+                });
+            });
+
+            jQuery('#containerBox .toolbarButton').hover(function () {
+                var selected = jQuery('#containerBox').find('.current');
+                jQuery(selected).attr('class', 'toolbarButton');
+                jQuery(selected).children().attr('class', 'imgOff');
+                jQuery(this).attr('class', 'toolbarButton current');
+                jQuery(this).children().attr('class', 'imgOn');
+                jQuery(this).css('cursor', 'pointer');
+            }, function () {
+                var selected = jQuery('#containerBox').find('.current');
+                jQuery(selected).attr('class', 'toolbarButton');
+                jQuery(selected).children().attr('class', 'imgOff');
+                jQuery(this).css('cursor', 'auto');
+            });
+
+
+            var changeTooltipPosition = function (event) {
+                var tooltipX = event.pageX - 8;
+                var tooltipY = event.pageY + 8;
+                jQuery('div.tooltip').css({
+                    top: tooltipY,
+                    left: tooltipX
+                });
+            };
+
+            var showTooltip = function (event) {
+                jQuery('div.tooltip').remove();
+                jQuery('<div class="tooltip">3D module not installed!!!</div>').appendTo('body');
+                changeTooltipPosition(event);
+            };
+
+            var hideTooltip = function () {
+                jQuery('div.tooltip').remove();
+            };
+
+            // Context Menues
+            jQuery("#windowing").contextMenu({
+                menu: 'winContext'
+            });
+            jQuery('#windowing').disableContextMenu();
+            jQuery("#measure").contextMenu({
+                menu: 'measureContext'
+            });
+            jQuery('#measure').disableContextMenu();
+
+            var timer = null;
+            var mouseup = false;
+
+            jQuery('#windowing').mousedown(function (evt) {
+                mouseup = false;
+                if (evt.which == 1) {
+                    timer = setTimeout(show, 1000);
+                    jQuery(this).mouseup(function (e) {
+                        mouseup = true;
+                        clearTimeout(timer);
+                        if (!jQuery('#winContext').is(":visible")) {
+                            doTool('windowing');
+                        }
+                    });
+                }
+            });
+
+            function show() {
+                if (!mouseup && jQuery('.toggleOff').attr('id') === 'windowing') {
+                    mouseup = true;
+                    jQuery('#winContext').show(":visible");
+                }
+            }
+
+            jQuery('#measure').mousedown(function (evt) {
+                mouseup = false;
+                if (evt.which == 1) {
+                    timer = setTimeout(showMeasureContext, 1000);
+                    jQuery(this).mouseup(function (evt) {
+                        mouseup = true;
+                        clearTimeout(timer);
+                        if (!jQuery('#measureContext').is(":visible")) {
+                            doTool('measure');
+                        }
+                    });
+                }
+
+            });
+
+            function showMeasureContext() {
+                if (!mouseup && jQuery('.toggleOff').attr('id') === 'measure') {
+                    jQuery('#measureContext').show();
+                }
+            }
+
+            jQuery(document).mousedown(function () {
+                jQuery('.contextMenu').hide();
+            });
+        }); // for document.ready
+
+        function doTool(toolId) {
+            // console.log("dsfffffffffff" + toolId);
+            createEvent("ToolSelection", {
+                tool: toolId
+            });
+            // jQuery('.toggleOff').removeClass('toggleOff');
+            // jQuery('#measure').css('pointer-events', 'none');
+            // jQuery('#measure').disableContextMenu();
+
+            $("#measureContext li a").click(function () {
+
+                if (toolId === 'cobb') {
+                    // $('.toggleOff').css('background', 'transparent!important');
+                    jQuery('.toggleOff', parent.document).css('background', 'transparent!important');
+                    $('#measure').disableContextMenu();
+                    jQuery('#' + tool, window.parent.document).removeClass('toggleOff');
+                    console.log("dsfffffffffff" + toolId);
+                } else {
+                    jQuery('#measure', parent.document).addClass('toggleOff');
+                    $('#measure').enableContextMenu();
+                }
+
+                // jQuery('#tool').html('');
+
+                // jQuery('#canvasDiv').css('cursor',"default");
+
+
+            });
+            //  else {
+            //      $('#measure').removeClass('toggleOff');
+            //         $('#measure').enableContextMenu();
+            // }
+
+        }
+
+        function doPreset(wc, ww) {
+            createEvent("ToolSelection", {
+                tool: "preset",
+                wc: wc,
+                ww: ww
+            });
+        }
+
+        function doDefaultPreset() {
+            var currSelFrame = getActiveFrame();
+            currSelFrame = currSelFrame.contentDocumnet || currSelFrame.contentWindow.document;
+            var str = jQuery('#serId', currSelFrame).text();
+            str = str.substring(0, str.lastIndexOf('_'));
+            var ser_Info = JSON.parse(sessionStorage[str]);
+            doPreset(ser_Info[0].windowCenter, ser_Info[0].windowWidth);
+        }
+
+        function loop(isLoop) {
+            createEvent('ToolSelection', {
+                tool: 'loop',
+                isLoop: isLoop
+            });
+        }
+        var modal = document.getElementById('downloadModal');
+
+        function doDownload() {
+            loadDownloadModal();
+            modal.style.display = "block";
+        }
+
+        function closeModal() {
+            modal.style.display = "none";
+        }
+
+        jQuery(document).keyup(function (e) {
+            var curr = jQuery('#containerBox').find('.current');
+
+            if (e.keyCode != 37 && e.keyCode != 39) {
+                switch (e.keyCode) {
+                    /* case 37: //Executed when LEFT arrow pressed
+                         if (curr.length) {
+                             jQuery(curr).removeClass('current');
+                             jQuery(curr).prev().addClass('current');
+                         } else {
+                             jQuery('#containerBox div:last-child').addClass('current');
+                         }
+                         break;
+                     case 39: //Executed when RIGHT arrow pressed
+                         if (curr.length) {
+                             jQuery(curr).removeClass('current');
+                             jQuery(curr).next().addClass('current');
+                         } else {
+                             jQuery('#containerBox div:first-child').addClass('current');
+                         }
+                         break;  */
+                    case 13: //Executed when ENTER key pressed
+                        jQuery(curr).removeClass('current');
+
+                        var featureSelected = jQuery(curr).attr('id');
+                        if (featureSelected.indexOf('loopDiv') < 0) {
+                            var obj = {
+                                tool: featureSelected
+                            };
+                            createEvent("ToolSelection", obj);
+                        } else {
+                            if ($('#loopChkBox').is(':checked')) {
+                                jQuery('#loopChkBox').attr('checked', false);
+                                createEvent('ToolSelection', {
+                                    tool: 'loop',
+                                    isLoop: false
+                                });
+                            } else {
+                                jQuery('#loopChkBox').attr('checked', true);
+                                createEvent('ToolSelection', {
+                                    tool: 'loop',
+                                    isLoop: true
+                                });
+                            }
+                        }
+                        break;
+                    case 46: //Executed when DELETE key pressed
+                        doTool('delete');
+                        break;
+                }
+            }
+        });
+
+        jQuery(document).mouseup(function (e) {
+            createEvent("ToolSelection", {
+                tool: "mouseup"
+            });
+        });
+
+
+    </script>
+</head>
+
+<body>
+
+    <div id='contentDiv' style="z-index:1000;top:30px;position:fixed;"></div>
+    <div id='tileDiv' style="z-index:1000;top:30px;left: 55px; position:fixed;"></div>
+
+    <div id="containerBox">
+        <div class="toolbarButton" align="center" id="layout" onclick="changeLayout('layout.html')">
+            <img src="~/images/layout.png" id="lblLayout" class="imgOff" alt="Layout" title="Layout">
+        </div>
+        <div class="toolbarButton" align="center" id="imageTile" onclick="changeImageTile('imageTile.html')">
+            <img src="~/images/imgTile.svg" id="lblImageTile" class="imgOff" alt="Image Tile" title="Tiling" style="max-width:16px;max-height:16px;top:12px;">
+        </div>
+        <div class="toggleButton" align="center" id="windowing">
+            <img src="~/images/windowing.png" id="lblWindowing" class="imgOff" alt="Windowing" title="Windowing">
+            <ul id="winContext" class="contextMenu" style="width:90px; position:fixed; background:#000;">
+                <li><a href="~/#" id="abdomen" class="cmenuItem" onclick="doPreset(50,320); jQuery(this).addClass('selected');">Abdomen</a></li>
+                <li><a href="~/#" id="lung" class="cmenuItem" onclick="doPreset(-600,1600); jQuery(this).addClass('selected');">Lung</a></li>
+                <li><a href="~/#" id="brain" class="cmenuItem" onclick="doPreset(40,80); jQuery(this).addClass('selected');">Brain</a></li>
+                <li><a href="~/#" id="bone" class="cmenuItem" onclick="doPreset(480,2500); jQuery(this).addClass('selected');">Bone</a></li>
+                <li><a href="~/#" id="head" class="cmenuItem" onclick="doPreset(90,350); jQuery(this).addClass('selected');">Head/Neck</a></li>
+                <li type='separator' style="height: 2px; background-color: #00CC66;"></li>
+                <li><a href="~/#" id="defaultWin" class="selected cmenuItem" onclick="doDefaultPreset(); jQuery(this).addClass('selected');">Default</a></li>
+            </ul>
+        </div>
+        <div class="toggleButton" align="center" id="zoom" onclick="doTool(this.id);">
+            <img src="~/images/zoomin.png" id="lblZoom" class="imgOff" alt="Zoom In" title="Zoom">
+        </div>
+        <div class="toggleButton" align="center" id="move" onclick="doTool(this.id);">
+            <img src="~/images/move.png" id="lblMove" class="imgOff" alt="Move" title="Move">
+        </div>
+        <div class="toggleButton" align="center" id="magnify" onclick="doTool(this.id);">
+            <img src="~/images/magnify.png" id="lblMagnify" class="imgOff" alt="Magnify" title="Magnify">
+        </div>
+        <div class="toggleButton" align="center" id="probe" onclick="doTool(this.id);">
+            <img src="~/images/probe.png" id="lblProbe" class="imgOff" alt="Probe" title="Probe">
+        </div>
+        <div class="toggleButton" align="center" id="scoutLine" onclick="doTool(this.id);">
+            <img src="~/images/scout.png" id="lblScoutLine" class="imgOff" alt="Scout Line" title="Show Scout Line">
+        </div>
+        <div class="toggleButton" align="center" id="stackImage" onClick="doTool(this.id);">
+            <img src="~/images/layer.png" id="lblScrollImages" class="imgOff" alt="Scroll Images" title="Stack Images">
+        </div>
+        <div class="toolbarButton" align="center" id="syncSeries" onclick="doSyncSeries()">
+            <img src="~/images/Link.png" id="lblSynchronize" class="imgOff" alt="Synchronize" title="Sync. Series">
+        </div>
+        <div class="toolbarButton" align="center" id="vflip" onclick="doTool(this.id);">
+            <img src="~/images/vflip.png" id="lblVFlip" class="imgOff" alt="VFlip" title="Vert.Flip">
+        </div>
+        <div class="toolbarButton" align="center" id="hflip" onclick="doTool(this.id);">
+            <img src="~/images/hflip.png" id="lblHFlip" class="imgOff" alt="HFlip" title="Hori.Flip">
+        </div>
+        <div class="toolbarButton" align="center" id="rotateLeft" onclick="doTool(this.id);">
+            <img src="~/images/rotate_left.png" id="lblLRotate" class="imgOff" alt="LRotate" title="Rotate Left">
+        </div>
+        <div class="toolbarButton" align="center" id="rotateRight" onclick="doTool(this.id);">
+            <img src="~/images/rotate_right.png" id="lblRRotate" class="imgOff" alt="RRotate" title="Rotate Right">
+        </div>
+        <div class="toolbarButton" align="center" id="reset" onclick="doTool(this.id);">
+            <img src="~/images/reset.png" id="lblReset" class="imgOff" alt="Reset" title="Reset">
+        </div>
+        <div class="toolbarButton" align="center" id="invert" onclick="doTool(this.id)">
+            <img src="~/images/invert.png" id="lblInvert" class="imgOff" alt="Invert" title="Invert">
+        </div>
+        <div class="toolbarButton" align="center" id="txtOverlay" onclick="doTool(this.id);">
+            <img src="~/images/textoverlay.png" id="lblTextOverlay" class="imgOff" alt="Text Overlay" title="Text Overlay">
+            <!-- <div id="overlayChoice"></div> -->
+        </div>
+
+        <!--  <div class="toolbarButton" align="center" id="3dDiv" onclick="do3D()">
+                <img src="~/images/Cube3D.png" class="imgOff" alt="3D">
+            </div>  -->
+
+        <div class="toolbarButton" align="center" id="fullScreen" onclick="doFullScreen(this)">
+            <img src="~/images/fullscreen1.png" id="lblfullscreen" class="imgOff" alt="View fullscreen" title="View Fullscreen">
+        </div>
+        <div class="toolbarButton" align="center" id="metaData" onclick="doTool(this.id);">
+            <img src="~/images/metadata.png" id="lblMetadata" class="imgOff" alt="View meta-data" title="View Meta-data">
+        </div>
+        <div class="toolbarButton" align="center" id="downloadStudy" onclick="doDownload();">
+            <img src="~/images/downloadStudy.png" id="lblDownload" class="imgOff" alt="Download Study" title="Download Study">
+        </div>
+
+        <div class="toolbarButton" align="center" id="hide">
+            <img width="27" src="~/images/hide-preview-orange.png" class="imgOff" title="Hide Preview" onclick="doTool($(this).parent().attr('id'));" />
+        </div>
+
+        <div class="toggleButton" align="center" id="measure">
+            <img src="~/images/ruler.png" id="lblLines" class="imgOff" alt="Draw measurement lines" title="Draw Measurements" />
+            <ul id="measureContext" class="contextMenu" style="position:fixed; background:#000;">
+                <li><a id="line" href="~/#" class="selectedshape cmenuItem" onclick="jQuery('.selectedshape').removeClass('selectedshape'); jQuery(this).addClass('selectedshape'); doTool('ruler');">Ruler</a></li>
+                <li><a id="rectangle" href="~/#" class="cmenuItem" onclick="jQuery('.selectedshape').removeClass('selectedshape'); jQuery(this).addClass('selectedshape'); doTool('rectangle');">Rectangle</a></li>
+                <li><a id="oval" href="~/#" class="cmenuItem" onclick="jQuery('.selectedshape').removeClass('selectedshape'); jQuery(this).addClass('selectedshape'); doTool('oval'); ">Oval</a></li>
+                <li><a id="angle" href="~/#" class="cmenuItem" onclick="jQuery('.selectedshape').removeClass('selectedshape'); jQuery(this).addClass('selectedshape'); doTool('angle'); ">Angle</a></li>
+                <li><a id="cobb" href="~/#" class="cmenuItem" onclick="jQuery('.selectedshape').removeClass('selectedshape'); jQuery(this).addClass('selectedshape'); doTool('cobb');">Cobb's Angle</a></li>
+                <li type='separator' style="height: 2px; background-color: #00CC66;"></li>
+                <li><a href="~/#" id="delete" class="cmenuItem" onclick="doTool('delete');">Delete </a></li>
+                <li><a href="~/#" id="deleteAll" class="cmenuItem" onclick="doTool('clearAll');">Delete All </a></li>
+            </ul>
+        </div>
+
+        <div id="loopDiv">
+            <table style="width:100%;">
+                <tr>
+                    <td width="30%">
+                        <div style="color: #FF8A00; font-family: Arial; text-align: right;">Cine Loop</div>
+                    </td>
+                    <td width="2%"><input type="checkbox" id="loopChkBox" onclick="loop(this.checked);"></td>
+                    <td width="65%" align="right">
+                        <div id="loopSlider"></div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <div id="downloadModal" class="modal">
+
+            <!-- Modal content -->
+            <div class="modal-content" id="downloadInfo">
+                <div class="title">
+                    <b id="title">Download JPEG/DICOM files</b>
+                </div>
+                <div id="downloadSelection-content" style="height: 90%; width: 100%;"></div>
+                <div id="errorMsg" style="height: 20%">
+                    <b id="errorInfo" class="error-info"></b>
+                    <button id="errorbtn" class="button" onclick="closeModal()">ok</button>
+                </div>
+            </div>
+
+        </div>
+        <!--  Report -->
+        <!-- <div align="center" id="report" onclick="doTool(this.id);" style="position: absolute; right:23%; margin-right: 5px;">
+                <img src="~/images/reportv.png" id="lblReport" class="imgOff" alt="View report" title="View Report"/>
+            </div>-->
+    </div>
+</body>
+
+</html>
